@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>2D Electric Field Visualizer</title>
+<style>
+    body { margin:0; overflow:hidden; background: #1e1e28; color:white; font-family: sans-serif; }
+    #hud { position:absolute; top:5px; left:5px; background: rgba(0,0,0,0.5); padding:5px 10px; border-radius:5px; }
+    canvas { display:block; }
+</style>
+</head>
+<body>
+
+<div id="hud"></div>
+<canvas id="fieldCanvas"></canvas>
+
+<script>
+// Constants
+const K = 1000; // Coulomb constant (scaled)
+const SOFT = 2;
+const GRID_SPACING = 30;
+const ARROW_SCALE = 30;
+
+const RED = 'rgb(255,0,0)';
+const BLUE = 'rgb(0,0,255)';
+
+let canvas = document.getElementById('fieldCanvas');
+let ctx = canvas.getContext('2d');
+let width = canvas.width = window.innerWidth;
+let height = canvas.height = window.innerHeight;
+
+window.addEventListener('resize', () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+});
+
+// Charges array
+let charges = [];
+let activeSign = 1;
+let dragging = null;
+
+// HUD
+let hudDiv = document.getElementById('hud');
+
+// Mouse handling
+canvas.addEventListener('mousedown', e => {
+    const mx = e.offsetX, my = e.offsetY;
+    if (e.button === 0) { // left click
+        dragging = null;
+        for (let i=0;i<charges.length;i++) {
+            let c = charges[i];
+            if ((c.x - mx)**2 + (c.y - my)**2 < 16*16) {
+                dragging = i;
+                return;
+            }
+        }
+        charges.push({x: mx, y: my, q: activeSign});
+    } else if (e.button === 2) { // right click
+        let nearest = null;
+        let best = 400;
+        for (let i=0;i<charges.length;i++) {
+            let d = (charges[i].x - mx)**2 + (charges[i].y - my)**2;
+            if (d < best) { best=d; nearest=i; }
+        }
+        if (nearest !== null) charges.splice(nearest,1);
+    }
+});
+
+canvas.addEventListener('mousemove', e => {
+    if (dragging !== null) {
+        charges[dragging].x = e.offsetX;
+        charges[dragging].y = e.offsetY;
+    }
+});
+
+canvas.addEventListener('mouseup', e => { dragging = null; });
+
+// Prevent context menu on right click
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Keyboard
+window.addEventListener('keydown', e => {
+    if (e.key === '+' || e.key === '=') activeSign = Math.min(10, activeSign+1);
+    else if (e.key === '-') activeSign = Math.max(-10, activeSign-1);
+    else if (e.key === 'r') charges = [];
+});
+
+// Utilities
+function magnitude(x,y) { return Math.sqrt(x*x+y*y); }
+
+function computeFieldAt(px,py) {
+    let Ex=0, Ey=0;
+    for (let c of charges) {
+        let dx = px - c.x;
+        let dy = py - c.y;
+        let r2 = dx*dx + dy*dy + SOFT*SOFT;
+        let inv_r3 = 1 / (r2 * Math.sqrt(r2));
+        Ex += K * c.q * dx * inv_r3;
+        Ey += K * c.q * dy * inv_r3;
+    }
+    return [Ex,Ey];
+}
+
+function colorFromMag(mag, maxMag) {
+    let t = Math.max(0, Math.min(1, maxMag>0? mag/maxMag : 0));
+    let r = Math.floor(255 * t);
+    let g = Math.floor(255 * (1 - t*0.4));
+    let b = Math.floor(255 * (1 - t));
+    return `rgb(${r},${g},${b})`;
+}
+
+function drawArrow(x,y,Ex,Ey,maxMag) {
+    let mag = magnitude(Ex,Ey);
+    if (mag===0) return;
+    let dx = (Ex/mag)*ARROW_SCALE;
+    let dy = (Ey/mag)*ARROW_SCALE;
+    let color = colorFromMag(mag,maxMag);
+    let endX = x+dx;
+    let endY = y+dy;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.lineTo(endX,endY);
+    ctx.stroke();
+
+    // arrowhead
+    let angle = Math.atan2(dy, dx);
+    let arrowSize = 4;
+    ctx.beginPath();
+    ctx.moveTo(endX,endY);
+    ctx.lineTo(endX - arrowSize*Math.cos(angle - Math.PI/6), endY - arrowSize*Math.sin(angle - Math.PI/6));
+    ctx.lineTo(endX - arrowSize*Math.cos(angle + Math.PI/6), endY - arrowSize*Math.sin(angle + Math.PI/6));
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+}
+
+function draw() {
+    ctx.fillStyle = '#1e1e28';
+    ctx.fillRect(0,0,width,height);
+
+    // Compute field grid
+    let fieldGrid = [];
+    let maxMag = 0;
+    for (let gx=0; gx<width; gx+=GRID_SPACING){
+        for (let gy=0; gy<height; gy+=GRID_SPACING){
+            let [Ex,Ey] = computeFieldAt(gx,gy);
+            let mag = magnitude(Ex,Ey);
+            fieldGrid.push([gx,gy,Ex,Ey,mag]);
+            if (mag>maxMag) maxMag=mag;
+        }
+    }
+
+    // Draw arrows
+    for (let [gx,gy,Ex,Ey,mag] of fieldGrid){
+        drawArrow(gx,gy,Ex,Ey,maxMag);
+    }
+
+    // Draw charges
+    for (let c of charges){
+        ctx.fillStyle = c.q>0 ? RED : BLUE;
+        ctx.beginPath();
+        ctx.arc(c.x,c.y,6,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    // HUD
+    hudDiv.textContent = `Charges: ${charges.length}  Active sign: ${activeSign>0?'+':''}${activeSign}  Left click: place/drag; Right click: remove; r: reset`;
+
+    requestAnimationFrame(draw);
+}
+
+// Start
+draw();
+</script>
+
+</body>
+</html>
